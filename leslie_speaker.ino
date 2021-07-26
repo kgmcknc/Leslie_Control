@@ -12,10 +12,20 @@
 #define WOOFER_MAX 520
 #define WOOFER_RANGE (WOOFER_MAX - WOOFER_MIN)
 
+#define TRANSITION_MIN_SPEED 0
+#define TRANSITION_MAX_SPEED 1023
+#define TRANSITION_RANGE (TRANSITION_MAX_SPEED - TRANSITION_MIN_SPEED)
+
 #define ADC_MIN 0
 #define ADC_MAX 1023
 #define ADC_RANGE (ADC_MAX - ADC_MIN)
 #define ADC_FLEX 5
+
+#define PWM_MIN 1
+#define PWM_MAX 1023
+
+#define TWEETER_UPDATE_DELAY 4
+#define WOOFER_UPDATE_DELAY 0
 
 #ifdef USE_SERIAL
 #define MOTOR_OFF_COUNT 3
@@ -56,9 +66,14 @@ int tr_temp;
 int bl_temp;
 int br_temp;
 int c_temp;
+int adc_temp;
 
 int tweeter_speed = TWEETER_MIN;
 int woofer_speed = WOOFER_MIN;
+int current_tweeter_speed = TWEETER_MIN;
+int current_woofer_speed = WOOFER_MIN;
+int transition_speed = TRANSITION_MIN_SPEED;
+int ramp_down;
 
 int switch_type_pin = 13;
 int switch_temp = 0;
@@ -67,6 +82,7 @@ int switch_type_value = -1;
 int motor_off_counter = 0;
 
 int update_speed;
+int ramp_to_max;
 
 void print_data(void);
 void update_adc_values(void);
@@ -82,6 +98,9 @@ void set_woofer_reverse(void);
 
 int motors_on = 1;
 int speed_select = 0;
+
+int tweeter_update_count = 0;
+int woofer_update_count = 0;
 
 void setup() {
   // put your setup code here, to run once:
@@ -117,6 +136,12 @@ void setup() {
   get_switch_type();
   get_switch_setting();
   update_adc();
+  get_motor_speed();
+  
+  current_tweeter_speed = tweeter_speed;
+  current_woofer_speed = woofer_speed;
+  update_speed = 0;
+  ramp_to_max = 0;
   set_motor_speed();
 
   #ifdef USE_SERIAL
@@ -136,6 +161,7 @@ void loop() {
   get_switch_type();
   get_switch_setting();
   update_adc();
+  get_motor_speed();
   set_motor_speed();
   
   #ifdef USE_SERIAL
@@ -201,6 +227,7 @@ void get_switch_setting(void){
         motors_on = 0;
       } else {
         motors_on = 1;
+        update_speed = 1;
         // speed 1 speed off ts closure
         if(switch_tip_value == 0){
           speed_select = 1;
@@ -221,6 +248,7 @@ void get_switch_setting(void){
       if(switch_tip_value == 0){
         motor_off_counter = 0;
         speed_select = !speed_select;
+        update_speed = 1;
         if(motors_on == 0){
           motors_on = 1;
         }
@@ -232,7 +260,20 @@ void get_switch_setting(void){
       motor_off_counter = motor_off_counter + 1;
     }
   }
-  
+
+  if(update_speed){
+    tweeter_update_count = 0;
+    woofer_update_count = 0;
+  } else {
+    if(tweeter_update_count > TWEETER_UPDATE_DELAY){
+      tweeter_update_count = 0;
+    }
+    if(woofer_update_count > WOOFER_UPDATE_DELAY){
+      woofer_update_count = 0;
+    }
+  }
+
+  ramp_to_max = update_speed;
   if(motor_off_counter > MOTOR_OFF_COUNT){
     motor_off_counter = 0;
     motors_on = 0;
@@ -250,18 +291,10 @@ void update_adc(void){
   pot_top_right_value = ADC_MAX - tr_temp;
   pot_bottom_left_value = ADC_MAX - bl_temp;
   pot_bottom_right_value = ADC_MAX - br_temp;
-  pot_center_value = c_temp;
+  pot_center_value = ADC_MAX - c_temp;
 }
 
-void set_motor_speed(void){
-  if(motors_on){
-    set_tweeter_forward();
-    set_woofer_forward();
-  } else {
-    set_tweeter_float();
-    set_woofer_float();
-  }
-
+void get_motor_speed(void){
   if(speed_select){
     tweeter_speed = TWEETER_MIN + (((long int) TWEETER_RANGE * pot_top_right_value) / ADC_MAX);
     woofer_speed = WOOFER_MIN + (((long int) WOOFER_RANGE * pot_bottom_right_value) / ADC_MAX);
@@ -269,8 +302,87 @@ void set_motor_speed(void){
     tweeter_speed = TWEETER_MIN + (((long int) TWEETER_RANGE * pot_top_left_value) / ADC_MAX);
     woofer_speed = WOOFER_MIN + (((long int) WOOFER_RANGE * pot_bottom_left_value) / ADC_MAX);
   }
-  Timer1.pwm(tweeter_pwm, tweeter_speed);   // 50% DC
-  Timer1.pwm(woofer_pwm, woofer_speed);   // 50% DC
+  
+  ramp_down = (pot_center_value > (ADC_MAX/2));
+  if(ramp_down){
+    transition_speed = 1 + TRANSITION_MIN_SPEED + (((long int) TRANSITION_RANGE * (ADC_MAX - pot_center_value)) / ADC_MAX);
+  } else {
+    transition_speed = 1 + TRANSITION_MIN_SPEED + (((long int) TRANSITION_RANGE * pot_center_value) / ADC_MAX);
+  }
+}
+
+void set_motor_speed(void){
+  if(update_speed){
+    update_speed = 0;
+    if(ramp_down){
+      if(woofer_speed > current_woofer_speed){
+        ramp_to_max = 1;
+      }
+      else {
+        ramp_to_max = 0;
+      }
+    } else {
+      ramp_to_max = 0;
+    }
+  }
+
+  if(tweeter_update_count == 0){
+    if(current_tweeter_speed != tweeter_speed){
+      if(current_tweeter_speed < tweeter_speed){
+        if(((long int) current_tweeter_speed + transition_speed) > tweeter_speed){
+          current_tweeter_speed = tweeter_speed;
+        } else {
+          current_tweeter_speed = current_tweeter_speed + transition_speed;
+        }
+      } else {
+        if(current_tweeter_speed < ((long int) tweeter_speed + transition_speed)){
+          current_tweeter_speed = tweeter_speed;
+        } else {
+          current_tweeter_speed = current_tweeter_speed - transition_speed;
+        }
+      }
+    }
+  }
+
+  if(woofer_update_count == 0){
+    if(ramp_to_max){
+      if(current_woofer_speed < PWM_MAX){
+        current_woofer_speed = current_woofer_speed + 1;
+      } else {
+        ramp_to_max = 0;
+      }
+    } else {
+      if(current_woofer_speed != woofer_speed){
+        if(current_woofer_speed < woofer_speed){
+          if(((long int) current_woofer_speed + transition_speed) > woofer_speed){
+            current_woofer_speed = woofer_speed;
+          } else {
+            current_woofer_speed = current_woofer_speed + transition_speed;
+          }
+        } else {
+          if(current_woofer_speed < ((long int) woofer_speed + transition_speed)){
+            current_woofer_speed = woofer_speed;
+          } else {
+            current_woofer_speed = current_woofer_speed - transition_speed;
+          }
+        }
+      }
+    } 
+  }
+
+  tweeter_update_count = tweeter_update_count + 1;
+  woofer_update_count = woofer_update_count + 1;
+  
+  Timer1.pwm(tweeter_pwm, current_tweeter_speed);   // 50% DC
+  Timer1.pwm(woofer_pwm, current_woofer_speed);   // 50% DC
+
+  if(motors_on){
+    set_tweeter_forward();
+    set_woofer_forward();
+  } else {
+    set_tweeter_float();
+    set_woofer_float();
+  }
 }
 
 void print_data(void){
