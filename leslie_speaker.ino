@@ -17,15 +17,18 @@
 #define TRANSITION_RANGE (TRANSITION_MAX_SPEED - TRANSITION_MIN_SPEED)
 
 #define ADC_MIN 0
-#define ADC_MAX 1023
+#define ADC_MAX 1024
 #define ADC_RANGE (ADC_MAX - ADC_MIN)
 #define ADC_FLEX 5
 
 #define PWM_MIN 1
 #define PWM_MAX 1023
 
-#define TWEETER_UPDATE_DELAY 4
-#define WOOFER_UPDATE_DELAY 0
+#define TWEETER_UPDATE_DELAY 25
+#define WOOFER_UPDATE_DELAY 10
+#define TWEETER_TRANSITION_RATIO 200
+#define WOOFER_TRANSITION_RATIO 50
+#define WOOFER_MAX_SPEEDUP 200
 
 #ifdef USE_SERIAL
 #define MOTOR_OFF_COUNT 3
@@ -73,6 +76,8 @@ int woofer_speed = WOOFER_MIN;
 int current_tweeter_speed = TWEETER_MIN;
 int current_woofer_speed = WOOFER_MIN;
 int transition_speed = TRANSITION_MIN_SPEED;
+int tweeter_transition_speed = TRANSITION_MIN_SPEED;
+int woofer_transition_speed = TRANSITION_MIN_SPEED;
 int ramp_down;
 
 int switch_type_pin = 13;
@@ -302,12 +307,14 @@ void get_motor_speed(void){
     tweeter_speed = TWEETER_MIN + (((long int) TWEETER_RANGE * pot_top_left_value) / ADC_MAX);
     woofer_speed = WOOFER_MIN + (((long int) WOOFER_RANGE * pot_bottom_left_value) / ADC_MAX);
   }
+
+  tweeter_transition_speed = 1 + TRANSITION_MIN_SPEED + ((((long int) TRANSITION_RANGE * pot_center_value) / ADC_MAX) / TWEETER_TRANSITION_RATIO);
   
   ramp_down = (pot_center_value > (ADC_MAX/2));
   if(ramp_down){
-    transition_speed = 1 + TRANSITION_MIN_SPEED + (((long int) TRANSITION_RANGE * (ADC_MAX - pot_center_value)) / ADC_MAX);
+    woofer_transition_speed = 1 + TRANSITION_MIN_SPEED + ((((long int) TRANSITION_RANGE * (ADC_MAX - pot_center_value)) / ADC_MAX) / WOOFER_TRANSITION_RATIO);
   } else {
-    transition_speed = 1 + TRANSITION_MIN_SPEED + (((long int) TRANSITION_RANGE * pot_center_value) / ADC_MAX);
+    woofer_transition_speed = 1 + TRANSITION_MIN_SPEED + ((((long int) TRANSITION_RANGE * pot_center_value) / ADC_MAX) / WOOFER_TRANSITION_RATIO);
   }
 }
 
@@ -329,41 +336,45 @@ void set_motor_speed(void){
   if(tweeter_update_count == 0){
     if(current_tweeter_speed != tweeter_speed){
       if(current_tweeter_speed < tweeter_speed){
-        if(((long int) current_tweeter_speed + transition_speed) > tweeter_speed){
+        if(((long int) current_tweeter_speed + tweeter_transition_speed) > tweeter_speed){
           current_tweeter_speed = tweeter_speed;
         } else {
-          current_tweeter_speed = current_tweeter_speed + transition_speed;
+          current_tweeter_speed = current_tweeter_speed + tweeter_transition_speed;
         }
       } else {
-        if(current_tweeter_speed < ((long int) tweeter_speed + transition_speed)){
+        if(current_tweeter_speed < ((long int) tweeter_speed + tweeter_transition_speed)){
           current_tweeter_speed = tweeter_speed;
         } else {
-          current_tweeter_speed = current_tweeter_speed - transition_speed;
+          current_tweeter_speed = current_tweeter_speed - tweeter_transition_speed;
         }
       }
     }
   }
 
-  if(woofer_update_count == 0){
+  if(ramp_to_max || (woofer_update_count == 0)){
     if(ramp_to_max){
       if(current_woofer_speed < PWM_MAX){
-        current_woofer_speed = current_woofer_speed + 1;
+        if(woofer_transition_speed > WOOFER_MAX_SPEEDUP){
+          current_woofer_speed = current_woofer_speed + 1;
+        } else {
+          current_woofer_speed = current_woofer_speed + 1 + (WOOFER_MAX_SPEEDUP - woofer_transition_speed);
+        }
       } else {
         ramp_to_max = 0;
       }
     } else {
       if(current_woofer_speed != woofer_speed){
         if(current_woofer_speed < woofer_speed){
-          if(((long int) current_woofer_speed + transition_speed) > woofer_speed){
+          if(((long int) current_woofer_speed + woofer_transition_speed) > woofer_speed){
             current_woofer_speed = woofer_speed;
           } else {
-            current_woofer_speed = current_woofer_speed + transition_speed;
+            current_woofer_speed = current_woofer_speed + woofer_transition_speed;
           }
         } else {
-          if(current_woofer_speed < ((long int) woofer_speed + transition_speed)){
+          if(current_woofer_speed < ((long int) woofer_speed + woofer_transition_speed)){
             current_woofer_speed = woofer_speed;
           } else {
-            current_woofer_speed = current_woofer_speed - transition_speed;
+            current_woofer_speed = current_woofer_speed - woofer_transition_speed;
           }
         }
       }
