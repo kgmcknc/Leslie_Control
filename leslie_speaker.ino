@@ -30,6 +30,8 @@
 #define WOOFER_TRANSITION_RATIO 50
 #define WOOFER_MAX_SPEEDUP 200
 
+#define SWITCH_POLARITY 1 // 0 is normally open, 1 is normally closed
+
 #ifdef USE_SERIAL
 #define MOTOR_OFF_COUNT 3
 #else
@@ -250,18 +252,19 @@ void get_switch_setting(void){
     if(tip_temp != switch_tip_value){
       switch_tip_value = tip_temp;
       switch_ring_value = ring_temp;
-      if(switch_tip_value == 0){
+      if(switch_tip_value == SWITCH_POLARITY){
         motor_off_counter = 0;
-        speed_select = !speed_select;
         update_speed = 1;
         if(motors_on == 0){
           motors_on = 1;
+        } else {
+          speed_select = !speed_select;
         }
       }
     }
     
     // continue incrementing counter as long as switch is held
-    if(switch_tip_value == 0){
+    if(switch_tip_value == SWITCH_POLARITY){
       motor_off_counter = motor_off_counter + 1;
     }
   }
@@ -281,6 +284,7 @@ void get_switch_setting(void){
   ramp_to_max = update_speed;
   if(motor_off_counter > MOTOR_OFF_COUNT){
     motor_off_counter = 0;
+    speed_select = 0;
     motors_on = 0;
   }
 }
